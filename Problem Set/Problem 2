@@ -1,1 +1,290 @@
+# this code is for the problem set of topic in macro and Labor course
+# code is beased on the following two papers
+# 1. Acemoglu, D. and Autor, D. (2011). Handbook of Labor Economics, 4b:1043–1171
+# 2. Katz, L. F. and Murphy, K. M. (1992). The Quarterly Journal of Economics
+# clear environment
+rm(list = ls()) # laad libaries
+install.packages("lubridate")
+library(tidyverse)
+library(lubridate)
+# read the downloaded
+data_00 <- read_fwf(file="data_00.dat",                     
+                    fwf_cols(year      = c(1, 4),
+                             serial    = c(5,9),
+                             month     = c(10,11),
+                             # hwtfinl   = c(12,21),
+                             cpsid     = c(12,25),
+                             asecflag  = c(26,26),
+                             hflag     = c(27,27),
+                             asecwth   = c(28,37),
+                             pernum    = c(38,39),
+                             # wtfinl    = c(50,63),
+                             cpsidp    = c(40,53),
+                             asecwt    = c(54,63),
+                             age       = c(64,65),
+                             sex       = c(66,66),
+                             race      = c(67,69),
+                             educ      = c(70,72),
+                             schlcoll  = c(73,73),
+                             indly     = c(74,77),
+                             classwly  = c(78,79),
+                             wkswork1  = c(80,81),
+                             wkswork2  = c(82,82),
+                             fullpart  = c(83,83),
+                             incwage   = c(84,90)),
+                    col_types = cols(year       = "i",
+                                     serial     = "n",
+                                     month      = "i",
+                                     #  hwtfinl    = "d",
+                                     cpsid      = "d",
+                                     asecflag   = "i",
+                                     hflag      = "i",
+                                     asecwth    = "d",
+                                     pernum     = "i",
+                                     # wtfinl     = "d",
+                                     cpsidp     = "d",
+                                     asecwt     = "d",                    
+                                     age        = "i",
+                                     sex        = "i",
+                                     race       = "i",
+                                     educ       = "i",
+                                     schlcoll   = "i",
+                                     indly      = "i",
+                                     classwly   = "i",
+                                     wkswork1   = "i",
+                                     wkswork2   = "i",
+                                     fullpart   = "i",
+                                     incwage    = "n"))
+#data_00$hwtfinl = data_00$hwtfinl/10000
+#data_00$wtfinl = data_00$wtfinl/10000
+data_00$asecwt = data_00$asecwt/10000
+# merge cpi data (see Acemoglu and Autor's Data Appendix)
+data_cpi <- read_csv(file = "data_cpi.csv", col_names = c("year","cpi"), col_types=cols(year = "D", cpi = "d"), skip = 1)
+data_cpi$year <- year(data_cpi$year)
+data_cpi <- data_cpi %>%
+  mutate(price_1982 = ifelse(year == 1982, cpi, 0)) %>% # the base year is 1982 (see Acemoglu and Autor's Data Appendix)
+  mutate(price_1982 = max(price_1982)) %>%
+  mutate(cpi = cpi/price_1982) %>%
+  select(year, cpi)
+data_00 <- data_00 %>%
+  left_join(data_cpi, by = "year")
+# replace missing values
+data_00 <- data_00 %>%
+  mutate(educ = ifelse(educ == 999, NA, educ)) %>%
+  mutate(classwly = ifelse(classwly == 99, NA, classwly)) %>%  
+  mutate(wkswork2 = ifelse(wkswork2 == 999, NA, wkswork2)) %>%  
+  mutate(incwage = ifelse(incwage == 9999999 | incwage == 9999998, NA, incwage)) %>%
+  mutate(race = ifelse(race == 999, NA, race))
+# create wrkswork variable: worked weeks are in brackets before 1976 see Katz and Murphy (1992)
+data_00 <- data_00 %>%
+  mutate(wkswork = ifelse(year >= 1976, wkswork1, NA)) %>%
+  mutate(wkswork = ifelse(year < 1976 & wkswork2 == 1, 7, wkswork)) %>%
+  mutate(wkswork = ifelse(year < 1976 & wkswork2 == 2, 20, wkswork)) %>%
+  mutate(wkswork = ifelse(year < 1976 & wkswork2 == 3, 33, wkswork)) %>%
+  mutate(wkswork = ifelse(year < 1976 & wkswork2 == 4, 43.5, wkswork)) %>%
+  mutate(wkswork = ifelse(year < 1976 & wkswork2 == 5, 48.5, wkswork)) %>%
+  mutate(wkswork = ifelse(year < 1976 & wkswork2 == 6, 51, wkswork))
+# handle the top coding issue for income see Katz and Murphy (1992)'s Data section
+data_00 <- data_00 %>%
+  group_by(year) %>%
+  mutate(top_incwage = max(incwage, na.rm = TRUE)) %>%
+  mutate(incwage = ifelse(incwage == top_incwage, 1.45*incwage, incwage)) %>%
+  ungroup()
+# calculate log real wages
+data_00 <- data_00 %>%
+  mutate(rwage = incwage/cpi/wkswork) %>%
+  mutate(lrwage = log(rwage))
+# create education duammies
+data_00 <- data_00 %>%
+  mutate(dfemale = (sex == 2)) # female
+data_00 <- data_00 %>%      
+  mutate(deduc_1 = ifelse(educ < 70, 1, 0)) %>%                # highshool dropout
+  mutate(deduc_2 = ifelse(educ >= 80 & educ < 110, 1, 0)) %>%  # some college
+  mutate(deduc_3 = ifelse(educ >= 110 & educ < 123, 1, 0)) %>% # 4 years college 
+  mutate(deduc_4 = ifelse(educ >= 123, 1, 0))                  # more than college
+data_00 <- data_00 %>%
+  #mutate(drace_1 = (race == 200)) %>% # black
+  mutate(drace_1 = ifelse(race == 200, 1, 0)) %>%
+  #mutate(drace_2 = (race > 200)) # nonwhite other
+  mutate (drace_2 = ifelse (race > 200, 1, 0)) 
+# create experience variable: check the IPUMS website for variable definition
+data_00 <- data_00 %>%
+  mutate(exp = ifelse(educ == 10, age - 8.5, NA)) %>%
+  mutate(exp = ifelse(educ == 11, age - 7, exp)) %>%
+  mutate(exp = ifelse(educ == 12, age - 8, exp)) %>%
+  mutate(exp = ifelse(educ == 13, age - 9, exp)) %>%
+  mutate(exp = ifelse(educ == 14, age - 10, exp)) %>%
+  mutate(exp = ifelse(educ == 20, age - 11.5, exp)) %>%
+  mutate(exp = ifelse(educ == 21, age - 11, exp)) %>%
+  mutate(exp = ifelse(educ == 22, age - 12, exp)) %>%
+  mutate(exp = ifelse(educ == 30, age - 13.5, exp)) %>%
+  mutate(exp = ifelse(educ == 31, age - 13, exp)) %>%
+  mutate(exp = ifelse(educ == 32, age - 14, exp)) %>%
+  mutate(exp = ifelse(educ == 40, age - 15, exp)) %>%
+  mutate(exp = ifelse(educ == 50, age - 16, exp)) %>%
+  mutate(exp = ifelse(educ == 60, age - 17, exp)) %>%
+  mutate(exp = ifelse(educ == 70, age - 18, exp)) %>%
+  mutate(exp = ifelse(educ == 71, age - 18, exp)) %>%
+  mutate(exp = ifelse(educ == 72, age - 18, exp)) %>%
+  mutate(exp = ifelse(educ == 73, age - 18, exp)) %>%
+  mutate(exp = ifelse(educ == 80, age - 19, exp)) %>%
+  mutate(exp = ifelse(educ == 81, age - 19, exp)) %>%
+  mutate(exp = ifelse(educ == 90, age - 20, exp)) %>%
+  mutate(exp = ifelse(educ == 91, age - 20, exp)) %>%
+  mutate(exp = ifelse(educ == 92, age - 20, exp)) %>%
+  mutate(exp = ifelse(educ == 100, age - 21, exp)) %>%
+  mutate(exp = ifelse(educ == 110, age - 22, exp)) %>%
+  mutate(exp = ifelse(educ == 111, age - 22, exp)) %>%
+  mutate(exp = ifelse(educ == 120, age - 23.5, exp)) %>%
+  mutate(exp = ifelse(educ == 121, age - 23, exp)) %>%
+  mutate(exp = ifelse(educ == 122, age - 24, exp)) %>%
+  mutate(exp = ifelse(educ == 123, age - 23, exp)) %>%
+  mutate(exp = ifelse(educ == 124, age - 23, exp)) %>%
+  mutate(exp = ifelse(educ == 125, age - 27, exp))
+# sample selection (see Katz and Murphy (1992) and Acemoglu and Autor (2011)'s Data Appendix)
+data_00 <- data_00 %>%
+  filter(rwage >= 67) %>%                                                       # real wage more than 67 dollars in the 1987 dollar
+  filter(age >= 16 & age <= 64) %>%                                             # age equal or above 16 and equal or less than 64
+  filter(fullpart == 1) %>%                                                     # work more than 35 hours
+  filter(wkswork >= 40) %>%                                                     # work more than 40 weeks
+  filter(classwly != 10 | classwly != 13 | classwly != 14) %>%                  # not self-employed
+  filter(!((year >= 1992 & year <= 2002) & (indly >= 940 & indly <= 960))) %>%  # not in military
+  filter(!(year >= 2003 & indly == 9890)) %>%
+  filter(schlcoll == 5 | year < 1986) %>%                                       # no school attendance
+  filter(exp >= 0)      # get rid of negative experience
+# graphing figures from HERE
+
+############################### Figure 1 ########################################
+
+write.csv(data_00, file = "data_01.csv")
+attach(data_00)
+
+# creating five experience groups
+data_02 = matrix(0,2009-1963,2)
+Y = dim(data_02)[1]
+data_02[,2] = 1962:2009
+table1 = data.frame(exp = c(5,15,25,35,45), deduc_1 = c(0), deduc_2 = c(0),
+                    deduc_3 = c(0), deduc_4 = c(0), drace_1 = 0, drace_2 = 0)
+table2 = data.frame(exp = c(5,15,25,35,45), deduc_1 = c(1), deduc_2 = c(0),
+                    deduc_3 = c(0), deduc_4 = c(0), drace_1 = 0, drace_2 = 0)
+table3 = data.frame(exp = c(5,15,25,35,45), deduc_1 = c(0), deduc_2 = c(1),
+                    deduc_3 = c(0), deduc_4 = c(0), drace_1 = 0, drace_2 = 0)
+table4 = data.frame(exp = c(5,15,25,35,45), deduc_1 = c(0), deduc_2 = c(0),
+                    deduc_3 = c(1), deduc_4 = c(0), drace_1 = 0, drace_2 = 0)
+table5 = data.frame(exp = c(5,15,25,35,45), deduc_1 = c(0), deduc_2 = c(0),
+                    deduc_3 = c(0), deduc_4 = c(1), drace_1 = 0, drace_2 = 0)
+exp_edu = matrix(0, 10, 5)
+mat1 = matrix(0,5,5)
+predict_all = array(0, dim = c(10, 5, Y))
+
+# separate female data
+data_female <- filter(data_00, sex == 2)
+
+#seperate male data 
+data_male <- filter(data_00, sex == 1)
+
+# Prediction
+
+# regression lrwage = deduc_1+deduc_2+deduc_3+deduc_4+poly(exp,4,raw=TRUE)+
+#                     (deduc_1+deduc_2+deduc_3+deduc_4):poly(exp,4,raw = TRUE)+
+#                     drace_1+drace_2+(deduc_1+deduc_2+deduc_3+deduc_4):exp:(drace_1+drace_2)
+for (i in 1:Y){
+  data_f <- filter(data_female, year == (1963+i))  # predicted values for female (sex == 2)
+  coef_f = lm(lrwage ~ deduc_1+deduc_2+deduc_3+deduc_4+
+              poly(exp,4,raw=TRUE)+(deduc_1+deduc_2+deduc_3+deduc_4):poly(exp,4,raw = TRUE)+
+              drace_1+drace_2+(deduc_1+deduc_2+deduc_3+deduc_4):exp:(drace_1+drace_2), data = data_f)
+  pred1_f = predict(coef_f, table1)
+  pred2_f = predict(coef_f, table2)
+  pred3_f = predict(coef_f, table3)
+  pred4_f = predict(coef_f, table4)
+  pred5_f = predict(coef_f, table5)
+  mat_f = matrix(c(pred1_f,pred2_f,pred3_f,pred4_f,pred5_f),5,5, byrow = T)
+ 
+  # Predicted values for male (sex == 1)
+  data_m <- filter(data_male, year == (1963+i))
+  coef_m = lm(lrwage ~ deduc_1+deduc_2+deduc_3+deduc_4+
+  poly(exp,4,raw=TRUE)+(deduc_1+deduc_2+deduc_3+deduc_4):poly(exp,4,raw = TRUE)+
+  drace_1+drace_2+(deduc_1+deduc_2+deduc_3+deduc_4):exp:(drace_1+drace_2), data = data_m)
+  pred1_m = predict(coef_m, table1)
+  pred2_m = predict(coef_m, table2)
+  pred3_m = predict(coef_m, table3)
+  pred4_m = predict(coef_m, table4)
+  pred5_m = predict(coef_m, table5)
+  mat_m = matrix(c(pred1_m,pred2_m,pred3_m,pred4_m,pred5_m),5,5, byrow = T) 
+  exp_edu[6:10,] = mat_m
+  exp_edu[1:5,] = mat_f
+  # predict value for each i (year)
+  predict_all[,,i] = exp_edu
+}
+
+# Create weighting matrices
+weight = matrix(0, 48, 10) 
+# weight for female
+weight1_f = dim(filter(data_00, exp<=9 & sex == 2))[1]
+weight2_f = dim(filter(data_00, 10<exp & exp<=20 & sex == 2))[1]
+weight3_f = dim(filter(data_00, 20<exp & exp<=30 & sex == 2))[1]
+weight4_f = dim(filter(data_00, 30<exp & exp<=40 & sex == 2))[1]
+weight5_f = dim(filter(data_00, 40<exp & exp<=50 & sex == 2))[1]
+total_f = weight1_f + weight2_f + weight3_f + weight4_f + weight5_f  # total number of female included
+# weight for male
+weight1_m = dim(filter(data_00, exp<=9 & sex == 2))[1]
+weight2_m = dim(filter(data_00, 10<exp & exp<=20 & sex == 1))[1]
+weight3_m = dim(filter(data_00, 20<exp & exp<=30 & sex == 1))[1]
+weight4_m = dim(filter(data_00, 30<exp & exp<=40 & sex == 1))[1]
+weight5_m = dim(filter(data_00, 40<exp & exp<=50 & sex == 1))[1]
+total_m = weight1_m + weight2_m + weight3_m + weight4_m + weight5_m  # total number of male imcluded
+total = total_f + total_m
+
+# weight for female by experience 
+weight_f = matrix(c(weight1_f/total,weight2_f/total,weight3_f/total,weight4_f/total,weight5_f/total),48,5, byrow = T)
+# weight for male by experience
+weight_m = matrix(c(weight1_m/total,weight2_m/total,weight3_m/total,weight4_m/total,weight5_m/total),48,5, byrow = T)
+
+# matrix combing both female weight and male weight
+weight[,1:5] = weight_f
+weight[,6:10] = weight_m
+weight
+
+# calculating loge wage ratio
+aver= matrix(0,Y,10)
+for (i in 1:Y){
+  aver[i,] = colMeans(predict_all[,,i])
+}
+val = aver*weight
+HS_COl = matrix(0,Y,2)
+for (i in 1:Y){
+  HS_COl[i,1] = (val[i,1]+val[i,2]+val[i,6]+val[i,7])/((val[i,1]+val[i,2]+val[i,6]+val[i,7]+val[i,3]+val[i,4]+val[i,5]+val[i,8]+val[i,9]+val[i,10]))
+  HS_COl[i,2] = (val[i,3]+val[i,4]+val[i,5]+val[i,8]+val[i,9]+val[i,10])/((val[i,1]+val[i,2]+val[i,6]+val[i,7]+val[i,3]+val[i,4]+val[i,5]+val[i,8]+val[i,9]+val[i,10]))
+}
+ratio = HS_COl[,2]/HS_COl[,1]
+
+
+# plotting all the years
+ratio_ <- ratio[c(1:46,1)]
+years = seq.int(1963,2009,1)
+fig1 = data.frame(wage_gap = ratio_, year = years)
+ggplot(data = fig1) + 
+  geom_point(mapping = aes(x = year, y = wage_gap)) +
+  geom_line(mapping = aes(x = year, y = wage_gap))+
+  ggtitle('college/high-school log weekly wage ratio')
+predict_all
+
+# plotting 1990 to 2009
+ratio_1990 <- ratio[c(30:46,1)]
+years = seq.int(1992,2009,1)
+fig2 = data.frame(wage_gap = ratio_1990, year = years)
+ggplot(data = fig2) + 
+  geom_point(mapping = aes(x = year, y = wage_gap)) +
+  geom_line(mapping = aes(x = year, y = wage_gap))+
+  ggtitle('college/high-school log weekly wage ratio 1')
+
+
+# plotting the first 23 years
+ratio_22 <- ratio[c(1:22,1)]
+years = seq.int(1963,1985,1)
+fig = data.frame(wage_gap = ratio_22, year = years)
+ggplot(data = fig) + 
+  geom_point(mapping = aes(x = year, y = wage_gap)) +
+  geom_line(mapping = aes(x = year, y = wage_gap))+
+  ggtitle('college/high-school log weekly wage ratio')
 
